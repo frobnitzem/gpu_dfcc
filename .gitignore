@@ -1,0 +1,6 @@
+*.o
+*.so
+*.clean
+*.pyc
+timer.dat
+test/*.out

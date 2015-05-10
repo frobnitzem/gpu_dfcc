@@ -38,6 +38,11 @@ using namespace boost;
 
 namespace psi{ namespace fnocc {
 
+extern "C" void init_plugin(void);
+void init_plugin() {
+	return;
+};
+
 extern "C" 
 int read_options(std::string name, Options& options)
 {

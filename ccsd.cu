@@ -2169,7 +2169,7 @@ double GPUDFCoupledCluster::compute_energy() {
   }else {
       free(Qoo);
       free(Qov);
-      free(Qvv);
+      cudaFreeHost(Qvv);
   }
 
   // free remaining memory
