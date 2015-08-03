@@ -110,7 +110,7 @@ void GPUDFCoupledCluster::CCResidual(){
     Tensor *R1, *R2;
     fclose(eqns);
 
-    set_rand(t1, o*v);
+    //set_rand(t1, o*v);
     printf("sizes = %d %d %d\n", nQ, o, v);
     boost::shared_ptr<PSIO> psio (new PSIO());
 
