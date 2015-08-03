@@ -31,6 +31,12 @@
 #include<libciomr/libciomr.h>
 #include<libqt/qt.h>
 
+extern "C" {
+  #include <parser.h>
+}
+#include <stdio.h>
+#include <string.h>
+
 #define PSIF_CIM 273 // TODO: move to psifiles.h
 
 #ifdef _OPENMP
@@ -64,27 +70,197 @@ GPUDFCoupledCluster::GPUDFCoupledCluster(boost::shared_ptr<Wavefunction> referen
     common_init();
 }
 
+void GPUDFCoupledCluster::common_init() {
+}
+
+
 GPUDFCoupledCluster::~GPUDFCoupledCluster()
 {
 }
 
+void set_rand(double *x, int len) {
+    int two = 2;
+    int seed[4] = {4, 13, 28, 47};
+
+    dlarnv_(&two, seed, &len, x);
+}
+
 void GPUDFCoupledCluster::CCResidual(){
+    bool timer = options_.get_bool("CC_TIMINGS");
+    int o = ndoccact;
+    int v = nvirt;
+    int vvoo[] = {v,v,o,o};
+    int vo[] = {v,o};
+    int oo[] = {o,o};
+    int ov[] = {o,v};
+    int vv[] = {v,v};
+    int doo[] = {nQ,o,o};
+    int dov[] = {nQ,o,v};
+    int dvv[] = {nQ,v,v};
+    uint32_t chks[8];
+    long int nthreads = omp_get_max_threads();
+    struct Environ e = {
+        .debuglevel = 0,
+    };
+    char name_w1[] = "w1";
+    char name_R[] = "R";
+    void *names[] = {&name_w1, &name_R};
+    FILE *eqns = fopen("df-ccsd.tex", "r");
+    SMap *defs = slack_parse_inp(&e, eqns);
+    Tensor *R1, *R2;
+    fclose(eqns);
+
+    set_rand(t1, o*v);
+    printf("sizes = %d %d %d\n", nQ, o, v);
+    boost::shared_ptr<PSIO> psio (new PSIO());
+
+    if(defs == NULL) {
+        printf("bad parse.\n");
+    }// else if(e.debuglevel) {
+    //    n = smap_iter(defs, show_assign, NULL);
+    //    printf("Total assignments = %d\n", n);
+    //}
+
+    // Add inputs
+    if (t2_on_disk){
+        psio->open(PSIF_DCC_T2,PSIO_OPEN_OLD);
+        psio->read_entry(PSIF_DCC_T2,"t2",(char*)&tempv[0],o*o*v*v*sizeof(double));
+        psio->close(PSIF_DCC_T2,1);
+        tb = tempv;
+    }
+    const char *arrs[] = {"t", "Fij", "Fia", "Fai", "Fab", "Uoo", "Uov", "Uvv"};
+    Ast *tens[] = { mkLit(4, vvoo, tb),
+		    mkLit(2,  oo,  Fij),
+		    mkLit(2,  ov,  Fia),
+		    mkLit(2,  vo,  Fai),
+		    mkLit(2,  vv,  Fab),
+		    mkLit(3, doo,  Qoo),
+		    mkLit(3, dov,  Qov),
+		    mkLit(3, dvv,  Qvv)
+		  };
+    /*smap_put(defs,   "t", mkLit(4, vvoo, tb));  // v, v, o, o
+    smap_put(defs, "Fij", mkLit(2,  oo,  Fij)); // o, o
+    smap_put(defs, "Fia", mkLit(2,  ov,  Fia)); // o, v
+    smap_put(defs, "Fai", mkLit(2,  vo,  Fai)); // v, o
+    smap_put(defs, "Fab", mkLit(2,  vv,  Fab)); // v, v
+    smap_put(defs, "Uoo", mkLit(3, doo,  Qoo)); // d, o, o
+    smap_put(defs, "Uov", mkLit(3, dov,  Qov)); // d, o, v
+    smap_put(defs, "Uvv", mkLit(3, dvv,  Qvv)); // d, v, v*/
+    for(int i=0; i<8; i++) {
+	Tensor *t = tens[i]->base->t;
+	smap_put(defs, arrs[i], tens[i]);
+	chks[i] = crc32_bitwise(t->x, t->len*sizeof(double));
+    }
+    //memset(w1, 0, v*o*sizeof(double)); // already done
+
+    MemSpace *mem = memspace_ctor(32, 1<<30); // 1 Gb
+    if(mem == NULL) {
+        printf("Error constructing memspace.\n");
+        return;
+    }
+    if(run_quark_n(2, names, nthreads, mem, defs)) {
+        printf("Error executing dag.\n");
+        return;
+    }
+    R1 = (Tensor *)names[0]; R2 = (Tensor *)names[1];
+    /*Ast *a = (Ast *)smap_get(defs, "R");
+    if(a == NULL) {
+	printf("R not found.\n");
+	return;
+    }
+    R2 = exec_ast(a, nthreads, mem, defs);*/
+    if(R1 == NULL || R2 == NULL) {
+	printf("Error executing dag.\n");
+	return;
+    }
+
+    printf("Used mem = %lu\n", mem->used);
+
+    // singles residual
+    C_DAXPY(v*o,1.0,R1->x,1,w1,1);
+    //memcpy(w1, R1->x, o*v*sizeof(double));
+    // doubles residual 
+    psio->open(PSIF_DCC_R2,PSIO_OPEN_NEW);
+    psio->write_entry(PSIF_DCC_R2,"residual",(char *)R2->x,o*o*v*v*sizeof(double));
+    psio->close(PSIF_DCC_R2,1);
+
+    tensor_dtor(&R1, mem);
+    tensor_dtor(&R2, mem);
+
+    //AB1(); // check other impl.
+    for(int i=0; i<8; i++) {
+	Tensor *t = tens[i]->base->t;
+	if(chks[i] != crc32_bitwise(t->x, t->len*sizeof(double))) {
+	    printf("Tensor %s changed!\n", arrs[i]);
+	}
+    }
+
+    memspace_dtor(&mem);
+    smap_dtor(&defs);
+
+    return;
+}
+
+void GPUDFCoupledCluster::AB1(){
     bool timer = options_.get_bool("CC_TIMINGS");
     long int o = ndoccact;
     long int v = nvirt;
+    long int nthreads = omp_get_max_threads();
 
-    // test new transposed storage of Qvv
-
-    // qvv transpose
-    #pragma omp parallel for schedule (static)
-    for (int q = 0; q < nQ; q++) {
-        C_DCOPY(v*v,Qvv+q*v*v,1,integrals+q,nQ);
+    // A1 (G):  U(c,d,k,l) (ad|kc)
+    #pragma omp parallel for schedule (dynamic) num_threads(nthreads)
+    for (int d = 0; d < v; d++) {
+	for (int i = 0; i < o; i++) {
+	    for (int k = 0; k < o; k++) {
+		for (int c = 0; c < v; c++) {
+		    tempt[d*o*o*v+i*o*v+k*v+c] = (2.0*tb[c*o*o*v+d*o*o+k*o+i] - tb[c*o*o*v+d*o*o+i*o+k]);
+		}
+	    }
+	}
     }
-    C_DCOPY(nQ*v*v,integrals,1,Qvv,1);
+    F_DGEMM('t','n',o*v,nQ,o*v,1.0,tempt,o*v,Qov,o*v,0.0,tempv,o*v);
+    #pragma omp parallel for schedule (dynamic) num_threads(nthreads)
+    for (int q = 0; q < nQ; q++) {
+	for (int a = 0; a < v; a++) {
+	    for (int b = 0; b < v; b++) {
+		integrals[q*v*v+b*v+a] = Qvv[q*v*v+a*v+b];
+	    }
+	}
+    }
+    F_DGEMM('n','t',o,v,v*nQ,1.0,tempv,o,integrals,v,1.0,w1,o);
 
+    /*if (timer) {
+	outfile->Printf("        A1 =      U(c,d,k,l) (ad|kc)                                    %6.2lf\n",omp_get_wtime()-start);
+	start = omp_get_wtime();
+    }*/
 
-    int n = 2 < omp_get_max_threads() ? 2 : omp_get_max_threads();
+    // B1 (H): -U(a,c,k,l) (ki|lc)
+    F_DGEMM('n','t',o*v,o*o,nQ,1.0,Qov,o*v,Qoo,o*o,0.0,integrals,o*v);
+    #pragma omp parallel for schedule (dynamic) num_threads(nthreads)
+    for (int i = 0; i < o; i++) {
+	for (int c = 0; c < v; c++) {
+	    for (int k = 0; k < o; k++) {
+		for (int l = 0; l < o; l++) {
+		    tempv[i*o*o*v+c*o*o+k*o+l] = integrals[k*o*o*v+i*o*v+l*v+c];
+		}
+	    }
+	}
+    }
+    C_DCOPY(o*o*v*v,tb,1,tempt,1);
+    #pragma omp parallel for schedule (dynamic) num_threads(nthreads)
+    for (int a = 0; a < v; a++) {
+	for (int c = 0; c < v; c++) {
+	    for (int k = 0; k < o; k++) {
+		C_DAXPY(o,-0.5,tb+a*o*o*v+c*o*o+k,o,tempt+a*o*o*v+c*o*o+k*o,1);
+	    }
+	}
+    }
+    F_DGEMM('t','n',o,v,o*o*v,-2.0,tempv,o*o*v,tempt,o*o*v,1.0,w1,o);
 
+    /*if (timer) {
+	outfile->Printf("        B1 =    - U(a,c,k,l) (ki|lc)                                    %6.2lf\n",omp_get_wtime()-start);
+	start = omp_get_wtime();
+    }*/
 }
 
 // t1-transformed 3-index fock matrix (using 3-index integrals from SCF)
@@ -482,6 +658,20 @@ void GPUDFCoupledCluster::UpdateT2(){
     }
 }
 
-
-
 }}
+
+const uint32_t Polynomial = 0xEDB88320;
+uint32_t crc32_bitwise(const void* data, size_t length, uint32_t previousCrc32){
+    uint32_t crc = ~previousCrc32;
+    uint8_t* current = (uint8_t*) data;
+    while (length--) {
+	crc ^= *current++;
+	for (uint8_t j = 0; j < 8; j++) { // instead of
+	    uint8_t lowestBit = crc & 1;
+	    crc >>= 1;
+	    if(lowestBit)
+		crc ^= Polynomial;
+	}
+    }
+    return ~crc;
+} 

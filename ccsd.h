@@ -51,6 +51,8 @@ class GPUDFCoupledCluster : public DFCoupledCluster{
 
     virtual bool same_a_b_orbs() const { return true; }
     virtual bool same_a_b_dens() const { return true; }
+    double compute_energy();
+    void common_init();
   protected:
 
     /// cc diagrams:
@@ -58,9 +60,11 @@ class GPUDFCoupledCluster : public DFCoupledCluster{
     void T1Fock();
     void T1Integrals();
     void UpdateT2();
-    double compute_energy();
+
+    void AB1(); // problem cases
 };
 }}
 
+uint32_t crc32_bitwise(const void* data, size_t length, uint32_t previousCrc32 = 0);
 
 #endif

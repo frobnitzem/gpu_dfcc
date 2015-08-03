@@ -22,7 +22,7 @@
 #@END LICENSE
 #
 
-SLACK = /shares/rogers/arr_test/arr/gpu_ccsd/slack
+SLACK = /shares/rogers/arr_test/slack
 QUARK = $(HOME)/build/quark-0.9.0
 PSI4SRC = /shares/rogers/psi4public
 PSI4 = /shares/rogers/psi4
