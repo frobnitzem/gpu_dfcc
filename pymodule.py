@@ -69,6 +69,8 @@ def run_gpu_dfcc(name, **kwargs):
         psi4.set_local_option('GPU_DFCC','COMPUTE_TRIPLES', False)
     if (lowername == 'gpu-df-ccsd(t)'):
         psi4.set_local_option('GPU_DFCC','COMPUTE_TRIPLES', True)
+	print "Triples not supported!"
+	return 0.0
     #if (lowername == 'fno-df-ccsd'):
     #    psi4.set_local_option('GPU_DFCC','COMPUTE_TRIPLES', False)
     #    psi4.set_local_option('GPU_DFCC','NAT_ORBS', True)

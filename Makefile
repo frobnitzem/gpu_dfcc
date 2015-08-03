@@ -22,12 +22,12 @@
 #@END LICENSE
 #
 
+SLACK = /shares/rogers/arr_test/slack
+QUARK = $(HOME)/build/quark-0.9.0
 PSI4SRC = /shares/rogers/psi4public
 PSI4 = /shares/rogers/psi4
-# nvidia compiler
-NVCC=nvcc
-CUDALIBS = -lcublas -L/apps/cuda/6.5.14/lib64
-CUDAFLAGS = -arch sm_13 -Xcompiler -fopenmp --compiler-options '-fPIC' -O2
+SLACKLIBS = -lslack -L$(SLACK)/lib -lquark -L$(QUARK)
+SLACK_INCLUDES = -I$(SLACK)/include -DQUARK
 
 
 #
@@ -41,13 +41,12 @@ NAME = $(shell basename `pwd`)
 
 # C++ source files for your plugin. By default we grab all *.cc files.
 CXXSRC  = $(notdir $(wildcard *.cc))
-CUDASRC = $(notdir $(wildcard *.cu))
 
 # Flags that were used to compile Psi4.
 CXX = icpc
 CXXDEFS = -DFC_SYMBOL=2 -DHAVE_MKL_LAPACK -DHAVE_MKL_BLAS -DHAS_CXX11_VARIADIC_TEMPLATES -DHAS_CXX11_STATIC_ASSERT -DHAS_CXX11_SIZEOF_MEMBER -DHAS_CXX11_RVALUE_REFERENCES -DHAS_CXX11_NULLPTR -DHAS_CXX11_LONG_LONG -DHAS_CXX11_LAMBDA -DHAS_CXX11_INITIALIZER_LIST -DHAS_CXX11_DECLTYPE -DHAS_CXX11_CSTDINT_H -DHAS_CXX11_CONSTEXPR -DHAS_CXX11_AUTO_RET_TYPE -DHAS_CXX11_AUTO -DHAS_CXX11_FUNC -DHAS_CXX11 -DSYS_LINUX
 CXXFLAGS = -DRESTRICT=__restrict__ -Xlinker -export-dynamic -fPIC -std=c++11 -mkl=parallel -openmp -O3 -no-prec-div -DNDEBUG -xHost -ggdb
-INCLUDES = -I$(PSI4)/src/lib -I$(PSI4SRC)/src/lib -I$(PSI4SRC)/include -I$(PSI4)/include -I$(PSI4)/boost/include -I/usr/include/python2.6 -I/usr/include -I/usr/include -I/usr/include -I/usr/include
+INCLUDES = -I$(PSI4)/src/lib -I$(PSI4SRC)/src/lib -I$(PSI4SRC)/include -I$(PSI4)/include -I$(PSI4)/boost/include -I/usr/include/python2.6 -I/usr/include -I/usr/include -I/usr/include -I/usr/include $(SLACK_INCLUDES)
 OBJDIR = $(PSI4)
 
 # Used to determine linking flags.
@@ -63,32 +62,25 @@ PSITARGET = $(NAME).so
 # Start the compilation rules
 default:: $(PSITARGET)
 
-# Cuda libraries:
-NVCCINCLUDE=-I$(top_srcdir)/include -I$(OBJDIR)/include -I$(OBJDIR)/src/lib $(INCLUDES)
-
 # Add the flags needed for shared library creation
 ifeq ($(UNAME), Linux)
-    LDFLAGS = -shared $(CUDALIBS)
+    LDFLAGS = -shared $(SLACKLIBS)
 endif
 ifeq ($(UNAME), Darwin)
-    LDFLAGS = -shared -undefined dynamic_lookup $(CUDALIBS)
+    LDFLAGS = -shared -undefined dynamic_lookup $(SLACKLIBS)
     CXXFLAGS += -fno-common
 endif
 
 # The object files
 BINOBJ  = $(CXXSRC:%.cc=%.o)
-CUDAOBJ = $(CUDASRC:%.cu=%.o)
 
 %.o: %.cc
 	$(CXX) $(CXXDEFS) $(CXXFLAGS) $(INCLUDES) -c $<
 
-%.o: %.cu
-	$(NVCC) $(CUDAFLAGS) $(NVCCINCLUDE) -c $< $(OUTPUT_OPTION)
-
-$(PSITARGET): $(BINOBJ) $(CUDAOBJ)
-	$(NVCC) $(LDFLAGS) -o $@ $^ $(CXXDBG) $(PSILIBS)
+$(PSITARGET): $(BINOBJ)
+	$(CXX) -o $@ $^ $(CXXDBG) $(PSILIBS) $(LDFLAGS)
 
 # Erase all compiled intermediate files
 clean:
-	rm -f $(CUDAOBJ) $(BINOBJ) $(PSITARGET) *.d *.pyc *.test output.dat psi.timer.dat
+	rm -f $(BINOBJ) $(PSITARGET) *.d *.pyc *.test output.dat psi.timer.dat
 

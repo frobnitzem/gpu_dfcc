@@ -70,7 +70,7 @@ int read_options(std::string name, Options& options)
           conventional algorithm would exceed the available resources -*/
       //options.add_bool("TRIPLES_LOW_MEMORY",false);
       /*- Do compute triples contribution? !expert -*/
-      options.add_bool("COMPUTE_TRIPLES", true);
+      options.add_bool("COMPUTE_TRIPLES", false);
       /*- Do use MP2 NOs to truncate virtual space for CCSD and (T)? -*/
       options.add_bool("NAT_ORBS", false);
       /*- Cutoff for occupation of MP2 NO orbitals in FNO-CCSD(T)
